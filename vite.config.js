@@ -22,7 +22,7 @@ export default defineConfig({
   base: './',
   build: {
     rollupOptions: {
-      external: ['/wasm/pdf_compressor.js']
+      external: [/\/wasm\/pdf_compressor\.js$/]
     }
   },
   optimizeDeps: {
