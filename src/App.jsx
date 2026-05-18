@@ -22,55 +22,61 @@ function formatBytes(bytes) {
 }
 
 async function compressPdf(fileBuffer, targetSize, onProgress) {
-  const { PDFDocument } = await import('pdf-lib')
+  // Load our custom Rust WASM compressor
+  const wasm = await import('/wasm/pdf_compressor.js')
   
-  const pdfDoc = await PDFDocument.load(fileBuffer)
-  const pages = pdfDoc.getPages()
-  
-  let quality = 0.85
   let iteration = 0
-  const maxIterations = 20
-  
-  while (iteration < maxIterations) {
+  const maxIterations = 10
+  let bestBuffer = null
+  let bestSize = fileBuffer.length
+  let quality = 85
+
+  while (iteration < maxIterations && quality >= 20) {
     iteration++
-    
-    // For images inside PDF, we'd need to extract and recompress
-    // Since pdf-lib doesn't support image extraction, we do metadata stripping + size check
-    
-    // Strip metadata
-    pdfDoc.setTitle('')
-    pdfDoc.setAuthor('')
-    pdfDoc.setSubject('')
-    pdfDoc.setKeywords([])
-    pdfDoc.setCreator('')
-    pdfDoc.setProducer('')
-    
-    const compressedBytes = await pdfDoc.save({
-      useObjectStreams: true,
-      addDefaultPage: false,
-    })
-    
-    const currentSize = compressedBytes.length
-    
+
     onProgress({
       iteration,
-      currentSize,
-      quality,
-      message: `Iteration ${iteration}: ${formatBytes(currentSize)}`
+      currentSize: bestSize,
+      quality: quality / 100,
+      message: `Compressing (quality ${quality}%)...`
     })
-    
+
+    // Call our Rust WASM function to recompress JPEG streams
+    const compressedBytes = wasm.compress_jpeg_in_pdf(new Uint8Array(fileBuffer), quality)
+
+    const currentSize = compressedBytes.length
+
     if (currentSize <= targetSize) {
       return { buffer: compressedBytes, iterations: iteration, success: true }
     }
-    
-    // Reduce quality for next iteration (affects image compression in underlying JPEG streams)
-    quality -= 0.05
-    if (quality < 0.2) break
+
+    if (currentSize < bestSize) {
+      bestBuffer = compressedBytes
+      bestSize = currentSize
+    }
+
+    // Reduce quality and try again
+    quality -= 10
   }
-  
-  // If we can't compress enough, return what we have with warning
-  const finalBytes = await pdfDoc.save({ useObjectStreams: true })
-  return { buffer: finalBytes, iterations: iteration, success: false, warning: 'Could not reach target size' }
+
+  // Return best result with warning if couldn't reach target
+  if (bestBuffer) {
+    const finalSize = bestSize
+    return {
+      buffer: bestBuffer,
+      iterations: iteration,
+      success: finalSize <= targetSize,
+      warning: finalSize <= targetSize ? undefined : `Reached ${formatBytes(finalSize)}, target ${formatBytes(targetSize)}`
+    }
+  }
+
+  // Fallback: return original
+  return {
+    buffer: fileBuffer,
+    iterations: 0,
+    success: false,
+    warning: 'Compression failed'
+  }
 }
 
 function FileCard({ file, onRemove }) {
