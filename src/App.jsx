@@ -78,18 +78,28 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
 
   // Use pdfjs-dist for deep compression via canvas rendering
   console.log('Checking pdfjs path, bestBuffer:', !!bestBuffer, 'bestSize:', bestSize, 'fileBuffer.length:', fileBuffer.length)
-  if (!bestBuffer || bestSize >= fileBuffer.length) {
+  if (!bestBuffer && bestSize >= fileBuffer.length) {
     onProgress({ iteration: 0, currentSize: fileBuffer.length, quality: 0.5, message: 'Rendering pages...' })
 
     try {
       console.log('Starting pdfjs compression...')
-      const compressedPdf = await compressWithPdfjs(new Uint8Array(fileBuffer), targetSize, onProgress)
-      console.log('pdfjs result:', compressedPdf ? compressedPdf.length : 'null')
-      if (compressedPdf && compressedPdf.length < bestSize) {
+      const pdfBytes = new Uint8Array(fileBuffer)
+      const compressedPdf = await compressWithPdfjs(pdfBytes, targetSize, onProgress)
+      console.log('pdfjs result:', compressedPdf ? compressedPdf.length : 'null', 'original was', fileBuffer.length)
+      
+      if (compressedPdf && compressedPdf.length < fileBuffer.length) {
         bestBuffer = compressedPdf
         bestSize = compressedPdf.length
         console.log('pdfjs improved bestBuffer to', bestSize)
+      } else {
+        console.log('pdfjs did NOT improve, skipping')
       }
+    } catch (e) {
+      console.error('pdfjs compress error:', e)
+    }
+  } else {
+    console.log('Skipping pdfjs, bestBuffer exists or already under size')
+  }
     } catch (e) {
       console.error('pdfjs compress error:', e)
       alert('pdfjs error: ' + e.message)
@@ -128,12 +138,12 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
   }
 
   if (!bestBuffer) {
-    console.log('No bestBuffer found, returning original with warning')
+    console.log('No bestBuffer found, returning original file')
     return {
       buffer: fileBuffer,
       iterations: 0,
       success: fileBuffer.length <= targetSize,
-      warning: fileBuffer.length <= targetSize ? undefined : 'Cannot compress further'
+      warning: undefined
     }
   }
 
@@ -172,7 +182,7 @@ async function compressWithPdfjs(pdfBytes, targetSize, onProgress) {
     })
 
     const page = await pdfDoc.getPage(i)
-    const viewport = page.getViewport({ scale: 1.5 })
+    const viewport = page.getViewport({ scale: 1.0 })
 
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
@@ -185,7 +195,7 @@ async function compressWithPdfjs(pdfBytes, targetSize, onProgress) {
     }).promise
 
     // Convert to JPEG at lower quality
-    const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.5)
+    const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.3)
     const jpegBytes = Uint8Array.from(atob(jpegDataUrl.split(',')[1]), c => c.charCodeAt(0))
 
     const pdfPage = pdfDocNew.addPage([viewport.width, viewport.height])
