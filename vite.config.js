@@ -13,9 +13,7 @@ const getGitHash = () => {
 }
 
 export default defineConfig({
-  define: {
-    __VERSION__: JSON.stringify(getGitHash())
-  },
+  plugins: [
     react(),
     {
       name: 'copy-wasm',
@@ -39,6 +37,9 @@ export default defineConfig({
       }
     }
   ],
+  define: {
+    __VERSION__: JSON.stringify(getGitHash())
+  },
   base: './',
   build: {
     target: 'esnext',
