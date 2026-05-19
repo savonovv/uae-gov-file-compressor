@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 import { Shield, Upload, FileText, X, CheckCircle, AlertCircle, Download, Loader2 } from 'lucide-react'
-import { PDFDocument } from 'pdf-lib'
+import { PDFDocument, PDFName, PDFDict } from 'pdf-lib'
+import * as pdfjsLib from 'pdfjs-dist'
 
 const TARGET_SIZES = [
   { label: '1 MB', value: 1 * 1024 * 1024 },
@@ -38,6 +39,7 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
   let bestBuffer = null
   let bestSize = fileBuffer.length
 
+  // Try WASM first (JPEG recompression)
   if (wasmModule) {
     let quality = 85
     let iteration = 0
@@ -70,23 +72,44 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
     }
   }
 
+  // Use pdfjs-dist for deep compression via canvas rendering
   if (!bestBuffer || bestSize >= fileBuffer.length) {
-    onProgress({ iteration: 0, currentSize: fileBuffer.length, quality: 0.8, message: 'Canvas compress...' })
+    onProgress({ iteration: 0, currentSize: fileBuffer.length, quality: 0.5, message: 'Rendering pages...' })
+
+    try {
+      const compressedPdf = await compressWithPdfjs(new Uint8Array(fileBuffer), targetSize, onProgress)
+      if (compressedPdf && compressedPdf.length < bestSize) {
+        bestBuffer = compressedPdf
+        bestSize = compressedPdf.length
+      }
+    } catch (e) {
+      console.error('pdfjs compress error:', e)
+    }
+  }
+
+  // Basic optimization as fallback
+  if (!bestBuffer || bestSize >= fileBuffer.length) {
+    onProgress({ iteration: 0, currentSize: fileBuffer.length, quality: 0.8, message: 'Optimizing PDF...' })
 
     try {
       const pdfDoc = await PDFDocument.load(fileBuffer)
-      const pages = pdfDoc.getPages()
-      const imagesCompressed = await compressImagesInPdf(pdfDoc, pages, targetSize, onProgress)
+      pdfDoc.setTitle('')
+      pdfDoc.setAuthor('')
+      pdfDoc.setSubject('')
+      pdfDoc.setKeywords([])
+      pdfDoc.setCreator('')
+      pdfDoc.setProducer('')
+      pdfDoc.setCreationDate(new Date(0))
+      pdfDoc.setModificationDate(new Date(0))
 
-      if (imagesCompressed > 0) {
-        const compressedPdf = await pdfDoc.save()
-        if (compressedPdf.length < bestSize) {
-          bestBuffer = compressedPdf
-          bestSize = compressedPdf.length
-        }
+      const compressedPdf = await pdfDoc.save({ useObjectStreams: true })
+      
+      if (compressedPdf.length < bestSize && compressedPdf.length < fileBuffer.length) {
+        bestBuffer = compressedPdf
+        bestSize = compressedPdf.length
       }
     } catch (e) {
-      console.error('Canvas compress error:', e)
+      console.error('Basic optimization error:', e)
     }
   }
 
@@ -107,68 +130,51 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
   }
 }
 
-async function compressImagesInPdf(pdfDoc, pages, targetSize, onProgress) {
-  const canvas = document.createElement('canvas')
-  const ctx = canvas.getContext('2d')
-  let imagesCompressed = 0
+async function compressWithPdfjs(pdfBytes, targetSize, onProgress) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`
+  
+  const loadingTask = pdfjsLib.getDocument({ data: pdfBytes })
+  const pdfDoc = await loadingTask.promise
+  const numPages = pdfDoc.numPages
 
-  for (let i = 0; i < pages.length; i++) {
-    const page = pages[i]
-    const { width, height } = page.getSize()
+  const pdfDocNew = await PDFDocument.create()
+  
+  for (let i = 1; i <= numPages; i++) {
+    onProgress({
+      iteration: i,
+      currentSize: 0,
+      quality: 0.5,
+      message: `Rendering page ${i}/${numPages}...`
+    })
 
-    try {
-      const imgDict = page.node.get(PDFName.of('Resources'))
-      if (!imgDict) continue
+    const page = await pdfDoc.getPage(i)
+    const viewport = page.getViewport({ scale: 1.5 })
 
-      const xObject = imgDict.get(PDFName.of('XObject'))
-      if (!xObject) continue
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    canvas.width = viewport.width
+    canvas.height = viewport.height
 
-      const keys = xObject.keys()
-      for (const key of keys) {
-        const obj = xObject.get(key)
-        if (obj && obj.constructor.name === 'PDFImage') {
-          try {
-            const imgBytes = obj.getBytes()
-            const img = await loadImage(new Uint8Array(imgBytes))
+    await page.render({
+      canvasContext: ctx,
+      viewport: viewport
+    }).promise
 
-            const maxDim = Math.max(width, height)
-            const scale = maxDim > 2000 ? 2000 / maxDim : 1
-            canvas.width = img.width * scale
-            canvas.height = img.height * scale
+    // Convert to JPEG at lower quality
+    const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.5)
+    const jpegBytes = Uint8Array.from(atob(jpegDataUrl.split(',')[1]), c => c.charCodeAt(0))
 
-            ctx.clearRect(0, 0, canvas.width, canvas.height)
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-
-            const jpegQuality = 0.7
-            const jpegDataUrl = canvas.toDataURL('image/jpeg', jpegQuality)
-            const jpegBytes = Uint8Array.from(atob(jpegDataUrl.split(',')[1]), c => c.charCodeAt(0))
-
-            const jpegImage = await pdfDoc.embedJpg(jpegBytes)
-            page.getObjects().get(key).set(jpegImage)
-
-            imagesCompressed++
-          } catch (e) {
-            console.error('Image compress error:', e)
-          }
-        }
-      }
-    } catch (e) {
-      continue
-    }
+    const pdfPage = pdfDocNew.addPage([viewport.width, viewport.height])
+    const jpegImage = await pdfDocNew.embedJpg(jpegBytes)
+    pdfPage.drawImage(jpegImage, {
+      x: 0,
+      y: 0,
+      width: viewport.width,
+      height: viewport.height
+    })
   }
 
-  return imagesCompressed
-}
-
-function loadImage(bytes) {
-  return new Promise((resolve, reject) => {
-    const blob = new Blob([bytes], { type: 'image/jpeg' })
-    const url = URL.createObjectURL(blob)
-    const img = new Image()
-    img.onload = () => { URL.revokeObjectURL(url); resolve(img) }
-    img.onerror = reject
-    img.src = url
-  })
+  return await pdfDocNew.save()
 }
 
 function FileCard({ file, onRemove }) {
