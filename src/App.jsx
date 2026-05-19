@@ -78,8 +78,8 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
 
   // Use pdfjs-dist for deep compression via canvas rendering
   console.log('Checking pdfjs path, bestBuffer:', !!bestBuffer, 'bestSize:', bestSize, 'fileBuffer.length:', fileBuffer.length)
-  if (!bestBuffer && bestSize >= fileBuffer.length) {
-    onProgress({ iteration: 0, currentSize: fileBuffer.length, quality: 0.5, message: 'Rendering pages...' })
+  if (bestSize > targetSize && (!bestBuffer || bestSize >= fileBuffer.length)) {
+    onProgress({ iteration: 0, currentSize: fileBuffer.length, quality: 0.3, message: 'Rendering pages...' })
 
     try {
       console.log('Starting pdfjs compression...')
@@ -87,7 +87,7 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
       const compressedPdf = await compressWithPdfjs(pdfBytes, targetSize, onProgress)
       console.log('pdfjs result:', compressedPdf ? compressedPdf.length : 'null', 'original was', fileBuffer.length)
       
-      if (compressedPdf && compressedPdf.length < fileBuffer.length) {
+      if (compressedPdf && compressedPdf.length < bestSize) {
         bestBuffer = compressedPdf
         bestSize = compressedPdf.length
         console.log('pdfjs improved bestBuffer to', bestSize)
@@ -98,11 +98,11 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
       console.error('pdfjs compress error:', e)
     }
   } else {
-    console.log('Skipping pdfjs, bestBuffer exists or already under size')
+    console.log('Skipping pdfjs, bestSize already', bestSize, 'or already under target', targetSize)
   }
 
   // Basic optimization as fallback
-  if (!bestBuffer || bestSize >= fileBuffer.length) {
+  if (bestSize > targetSize && (!bestBuffer || bestSize >= fileBuffer.length)) {
     onProgress({ iteration: 0, currentSize: fileBuffer.length, quality: 0.8, message: 'Optimizing PDF...' })
 
     try {
@@ -131,7 +131,7 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
   }
 
   if (!bestBuffer) {
-    console.log('No bestBuffer found, returning original file')
+    console.log('No bestBuffer found, returning original file with no warning')
     return {
       buffer: fileBuffer,
       iterations: 0,
@@ -140,7 +140,7 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
     }
   }
 
-  console.log('Returning bestBuffer, bestSize:', bestSize)
+  console.log('Returning bestBuffer, bestSize:', bestSize, 'target:', targetSize)
   return {
     buffer: bestBuffer,
     iterations: 0,
@@ -158,11 +158,14 @@ async function compressWithPdfjs(pdfBytes, targetSize, onProgress) {
   
   console.log('Document loading...')
   const loadingTask = pdfjsLib.getDocument({ data: pdfBytes })
-  console.log('Document loading...')
   const pdfDoc = await loadingTask.promise
   console.log('Document loaded, numPages:', pdfDoc.numPages)
   const numPages = pdfDoc.numPages
 
+  // Calculate target DPI based on original PDF dimensions and target size
+  // Assume average page size and target to get ~150 DPI output
+  const targetDpi = 150
+  
   const pdfDocNew = await PDFDocument.create()
   
   for (let i = 1; i <= numPages; i++) {
@@ -170,34 +173,40 @@ async function compressWithPdfjs(pdfBytes, targetSize, onProgress) {
     onProgress({
       iteration: i,
       currentSize: 0,
-      quality: 0.5,
+      quality: 0.3,
       message: `Rendering page ${i}/${numPages}...`
     })
 
     const page = await pdfDoc.getPage(i)
     const viewport = page.getViewport({ scale: 1.0 })
+    
+    // Calculate scale to fit to reasonable DPI (150)
+    // Standard PDF DPI is 72, so scale of 2.0 = ~150 DPI for display
+    // But we want SMALLER output for scanned docs, so use 0.5 = ~75 DPI
+    const scale = 0.5
+    const scaledViewport = page.getViewport({ scale })
 
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
-    canvas.width = viewport.width
-    canvas.height = viewport.height
+    canvas.width = scaledViewport.width
+    canvas.height = scaledViewport.height
 
     await page.render({
       canvasContext: ctx,
-      viewport: viewport
+      viewport: scaledViewport
     }).promise
 
-    // Convert to JPEG at lower quality
-    const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.3)
+    // Convert to JPEG at lower quality (0.2 = 20% quality)
+    const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.2)
     const jpegBytes = Uint8Array.from(atob(jpegDataUrl.split(',')[1]), c => c.charCodeAt(0))
 
-    const pdfPage = pdfDocNew.addPage([viewport.width, viewport.height])
+    const pdfPage = pdfDocNew.addPage([scaledViewport.width, scaledViewport.height])
     const jpegImage = await pdfDocNew.embedJpg(jpegBytes)
     pdfPage.drawImage(jpegImage, {
       x: 0,
       y: 0,
-      width: viewport.width,
-      height: viewport.height
+      width: scaledViewport.width,
+      height: scaledViewport.height
     })
   }
 
