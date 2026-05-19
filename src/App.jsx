@@ -23,10 +23,21 @@ function formatBytes(bytes) {
 
 async function compressPdf(fileBuffer, targetSize, onProgress) {
   // Load our custom Rust WASM compressor (relative path for GitHub Pages subdirectory)
-  const wasmModule = await import('./wasm/pdf_compressor.js')
+  let wasmModule;
+  try {
+    wasmModule = await import('./wasm/pdf_compressor.js')
+  } catch (e) {
+    console.error('Failed to load WASM module:', e)
+    return { buffer: fileBuffer, iterations: 0, success: false, warning: 'Failed to load WASM module: ' + e.message }
+  }
   
   // Initialize WASM before using any functions
-  await wasmModule.default()
+  try {
+    await wasmModule.default()
+  } catch (e) {
+    console.error('Failed to initialize WASM:', e)
+    return { buffer: fileBuffer, iterations: 0, success: false, warning: 'Failed to initialize WASM: ' + e.message }
+  }
   
   // If original is already under target, no compression needed
   if (fileBuffer.length <= targetSize) {
@@ -78,13 +89,13 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
     quality -= 10
   }
 
-  // If bestBuffer is null, the original has no compressible content or failed
+  // If bestBuffer is null, return original buffer (maybe no compressible JPEG streams)
   if (!bestBuffer) {
     return {
       buffer: fileBuffer,
       iterations: 0,
-      success: false,
-      warning: 'No JPEG streams found or compression not possible'
+      success: fileBuffer.length <= targetSize,
+      warning: 'File has no compressible JPEG streams or already under target size'
     }
   }
 
