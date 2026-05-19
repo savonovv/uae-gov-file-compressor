@@ -28,6 +28,11 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
   // Initialize WASM before using any functions
   await wasmModule.default()
   
+  // If original is already under target, no compression needed
+  if (fileBuffer.length <= targetSize) {
+    return { buffer: fileBuffer, iterations: 0, success: true }
+  }
+  
   let iteration = 0
   const maxIterations = 10
   let bestBuffer = null
@@ -45,7 +50,18 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
     })
 
     // Call our Rust WASM function to recompress JPEG streams
-    const compressedBytes = wasmModule.compress_jpeg_in_pdf(new Uint8Array(fileBuffer), quality)
+    let compressedBytes;
+    try {
+      compressedBytes = wasmModule.compress_jpeg_in_pdf(new Uint8Array(fileBuffer), quality)
+    } catch (e) {
+      console.error('WASM compression error:', e)
+      break
+    }
+
+    if (!compressedBytes || compressedBytes.length === 0) {
+      console.error('WASM returned empty result')
+      break
+    }
 
     const currentSize = compressedBytes.length
 
@@ -62,23 +78,23 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
     quality -= 10
   }
 
-  // Return best result with warning if couldn't reach target
-  if (bestBuffer) {
-    const finalSize = bestSize
+  // If bestBuffer is null, the original has no compressible content or failed
+  if (!bestBuffer) {
     return {
-      buffer: bestBuffer,
-      iterations: iteration,
-      success: finalSize <= targetSize,
-      warning: finalSize <= targetSize ? undefined : `Reached ${formatBytes(finalSize)}, target ${formatBytes(targetSize)}`
+      buffer: fileBuffer,
+      iterations: 0,
+      success: false,
+      warning: 'No JPEG streams found or compression not possible'
     }
   }
 
-  // Fallback: return original
+  // Return best result with warning if couldn't reach target
+  const finalSize = bestSize
   return {
-    buffer: fileBuffer,
-    iterations: 0,
-    success: false,
-    warning: 'Compression failed'
+    buffer: bestBuffer,
+    iterations: iteration,
+    success: finalSize <= targetSize,
+    warning: finalSize <= targetSize ? undefined : `Reached ${formatBytes(finalSize)}, target ${formatBytes(targetSize)}`
   }
 }
 
