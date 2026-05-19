@@ -24,15 +24,19 @@ function formatBytes(bytes) {
 }
 
 async function compressPdf(fileBuffer, targetSize, onProgress) {
+  console.log('compressPdf called, fileBuffer.length:', fileBuffer.length, 'targetSize:', targetSize)
   let wasmModule;
   try {
     wasmModule = await import('./wasm/pdf_compressor.js')
+    console.log('WASM module loaded')
     await wasmModule.default()
+    console.log('WASM module initialized')
   } catch (e) {
     console.error('WASM init error:', e)
   }
 
   if (fileBuffer.length <= targetSize) {
+    console.log('File already under target size')
     return { buffer: fileBuffer, iterations: 0, success: true }
   }
 
@@ -73,6 +77,7 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
   }
 
   // Use pdfjs-dist for deep compression via canvas rendering
+  console.log('Checking pdfjs path, bestBuffer:', !!bestBuffer, 'bestSize:', bestSize, 'fileBuffer.length:', fileBuffer.length)
   if (!bestBuffer || bestSize >= fileBuffer.length) {
     onProgress({ iteration: 0, currentSize: fileBuffer.length, quality: 0.5, message: 'Rendering pages...' })
 
@@ -87,7 +92,10 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
       }
     } catch (e) {
       console.error('pdfjs compress error:', e)
+      alert('pdfjs error: ' + e.message)
     }
+  } else {
+    console.log('Skipping pdfjs, bestSize already', bestSize)
   }
 
   // Basic optimization as fallback
@@ -106,6 +114,7 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
       pdfDoc.setModificationDate(new Date(0))
 
       const compressedPdf = await pdfDoc.save({ useObjectStreams: true })
+      console.log('Basic optimization result:', compressedPdf.length, 'vs bestSize', bestSize)
       
       if (compressedPdf.length < bestSize && compressedPdf.length < fileBuffer.length) {
         bestBuffer = compressedPdf
@@ -114,9 +123,12 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
     } catch (e) {
       console.error('Basic optimization error:', e)
     }
+  } else {
+    console.log('Skipping basic optimization, bestSize already', bestSize)
   }
 
   if (!bestBuffer) {
+    console.log('No bestBuffer found, returning original with warning')
     return {
       buffer: fileBuffer,
       iterations: 0,
@@ -125,6 +137,7 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
     }
   }
 
+  console.log('Returning bestBuffer, bestSize:', bestSize)
   return {
     buffer: bestBuffer,
     iterations: 0,
