@@ -23,7 +23,10 @@ function formatBytes(bytes) {
 
 async function compressPdf(fileBuffer, targetSize, onProgress) {
   // Load our custom Rust WASM compressor (relative path for GitHub Pages subdirectory)
-  const wasm = await import('./wasm/pdf_compressor.js')
+  const wasmModule = await import('./wasm/pdf_compressor.js')
+  
+  // Initialize WASM before using any functions
+  await wasmModule.default()
   
   let iteration = 0
   const maxIterations = 10
@@ -42,7 +45,7 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
     })
 
     // Call our Rust WASM function to recompress JPEG streams
-    const compressedBytes = wasm.compress_jpeg_in_pdf(new Uint8Array(fileBuffer), quality)
+    const compressedBytes = wasmModule.compress_jpeg_in_pdf(new Uint8Array(fileBuffer), quality)
 
     const currentSize = compressedBytes.length
 
