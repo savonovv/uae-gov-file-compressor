@@ -2,9 +2,20 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 import { copyFileSync, mkdirSync, existsSync } from 'fs'
+import { execSync } from 'child_process'
+
+const getGitHash = () => {
+  try {
+    return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim()
+  } catch {
+    return 'unknown'
+  }
+}
 
 export default defineConfig({
-  plugins: [
+  define: {
+    __VERSION__: JSON.stringify(getGitHash())
+  },
     react(),
     {
       name: 'copy-wasm',
