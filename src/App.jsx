@@ -314,6 +314,8 @@ export default function App() {
   const [isCompressing, setIsCompressing] = useState(false)
   const [isComplete, setIsComplete] = useState(false)
 
+  console.log('App render, version: 07407ee, files:', files.length)
+
   const handleFilesSelected = (newFiles) => {
     const fileObjects = newFiles.map((file, index) => ({
       id: Date.now() + index,
