@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react'
 import { Shield, Upload, FileText, X, CheckCircle, AlertCircle, Download, Loader2 } from 'lucide-react'
+import { PDFDocument } from 'pdf-lib'
 
 const TARGET_SIZES = [
   { label: '1 MB', value: 1 * 1024 * 1024 },
@@ -22,91 +23,152 @@ function formatBytes(bytes) {
 }
 
 async function compressPdf(fileBuffer, targetSize, onProgress) {
-  // Load our custom Rust WASM compressor (relative path for GitHub Pages subdirectory)
   let wasmModule;
   try {
     wasmModule = await import('./wasm/pdf_compressor.js')
-  } catch (e) {
-    console.error('Failed to load WASM module:', e)
-    return { buffer: fileBuffer, iterations: 0, success: false, warning: 'Failed to load WASM module: ' + e.message }
-  }
-  
-  // Initialize WASM before using any functions
-  try {
     await wasmModule.default()
   } catch (e) {
-    console.error('Failed to initialize WASM:', e)
-    return { buffer: fileBuffer, iterations: 0, success: false, warning: 'Failed to initialize WASM: ' + e.message }
+    console.error('WASM init error:', e)
   }
-  
-  // If original is already under target, no compression needed
+
   if (fileBuffer.length <= targetSize) {
     return { buffer: fileBuffer, iterations: 0, success: true }
   }
-  
-  let iteration = 0
-  const maxIterations = 10
+
   let bestBuffer = null
   let bestSize = fileBuffer.length
-  let quality = 85
 
-  while (iteration < maxIterations && quality >= 20) {
-    iteration++
+  if (wasmModule) {
+    let quality = 85
+    let iteration = 0
+    const maxIterations = 10
 
-    onProgress({
-      iteration,
-      currentSize: bestSize,
-      quality: quality / 100,
-      message: `Compressing (quality ${quality}%)...`
-    })
+    while (iteration < maxIterations && quality >= 20) {
+      iteration++
 
-    // Call our Rust WASM function to recompress JPEG streams
-    let compressedBytes;
-    try {
-      compressedBytes = wasmModule.compress_jpeg_in_pdf(new Uint8Array(fileBuffer), quality)
-    } catch (e) {
-      console.error('WASM compression error:', e)
-      break
+      onProgress({
+        iteration,
+        currentSize: bestSize,
+        quality: quality / 100,
+        message: `WASM compress (q${quality}%)...`
+      })
+
+      try {
+        const compressedBytes = wasmModule.compress_jpeg_in_pdf(new Uint8Array(fileBuffer), quality)
+        if (compressedBytes && compressedBytes.length > 0 && compressedBytes.length < bestSize) {
+          bestBuffer = compressedBytes
+          bestSize = compressedBytes.length
+          if (compressedBytes.length <= targetSize) {
+            return { buffer: compressedBytes, iterations: iteration, success: true }
+          }
+        }
+      } catch (e) {
+        console.error('WASM compress error:', e)
+        break
+      }
+      quality -= 10
     }
-
-    if (!compressedBytes || compressedBytes.length === 0) {
-      console.error('WASM returned empty result')
-      break
-    }
-
-    const currentSize = compressedBytes.length
-
-    if (currentSize <= targetSize) {
-      return { buffer: compressedBytes, iterations: iteration, success: true }
-    }
-
-    if (currentSize < bestSize) {
-      bestBuffer = compressedBytes
-      bestSize = currentSize
-    }
-
-    // Reduce quality and try again
-    quality -= 10
   }
 
-  // If bestBuffer is null, return original buffer (maybe no compressible JPEG streams)
+  if (!bestBuffer || bestSize >= fileBuffer.length) {
+    onProgress({ iteration: 0, currentSize: fileBuffer.length, quality: 0.8, message: 'Canvas compress...' })
+
+    try {
+      const pdfDoc = await PDFDocument.load(fileBuffer)
+      const pages = pdfDoc.getPages()
+      const imagesCompressed = await compressImagesInPdf(pdfDoc, pages, targetSize, onProgress)
+
+      if (imagesCompressed > 0) {
+        const compressedPdf = await pdfDoc.save()
+        if (compressedPdf.length < bestSize) {
+          bestBuffer = compressedPdf
+          bestSize = compressedPdf.length
+        }
+      }
+    } catch (e) {
+      console.error('Canvas compress error:', e)
+    }
+  }
+
   if (!bestBuffer) {
     return {
       buffer: fileBuffer,
       iterations: 0,
       success: fileBuffer.length <= targetSize,
-      warning: 'File has no compressible JPEG streams or already under target size'
+      warning: fileBuffer.length <= targetSize ? undefined : 'Cannot compress further'
     }
   }
 
-  // Return best result with warning if couldn't reach target
-  const finalSize = bestSize
   return {
     buffer: bestBuffer,
-    iterations: iteration,
-    success: finalSize <= targetSize,
-    warning: finalSize <= targetSize ? undefined : `Reached ${formatBytes(finalSize)}, target ${formatBytes(targetSize)}`
+    iterations: 0,
+    success: bestSize <= targetSize,
+    warning: bestSize <= targetSize ? undefined : `Reached ${formatBytes(bestSize)}, target ${formatBytes(targetSize)}`
   }
+}
+
+async function compressImagesInPdf(pdfDoc, pages, targetSize, onProgress) {
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  let imagesCompressed = 0
+
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i]
+    const { width, height } = page.getSize()
+
+    try {
+      const imgDict = page.node.get(PDFName.of('Resources'))
+      if (!imgDict) continue
+
+      const xObject = imgDict.get(PDFName.of('XObject'))
+      if (!xObject) continue
+
+      const keys = xObject.keys()
+      for (const key of keys) {
+        const obj = xObject.get(key)
+        if (obj && obj.constructor.name === 'PDFImage') {
+          try {
+            const imgBytes = obj.getBytes()
+            const img = await loadImage(new Uint8Array(imgBytes))
+
+            const maxDim = Math.max(width, height)
+            const scale = maxDim > 2000 ? 2000 / maxDim : 1
+            canvas.width = img.width * scale
+            canvas.height = img.height * scale
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height)
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+            const jpegQuality = 0.7
+            const jpegDataUrl = canvas.toDataURL('image/jpeg', jpegQuality)
+            const jpegBytes = Uint8Array.from(atob(jpegDataUrl.split(',')[1]), c => c.charCodeAt(0))
+
+            const jpegImage = await pdfDoc.embedJpg(jpegBytes)
+            page.getObjects().get(key).set(jpegImage)
+
+            imagesCompressed++
+          } catch (e) {
+            console.error('Image compress error:', e)
+          }
+        }
+      }
+    } catch (e) {
+      continue
+    }
+  }
+
+  return imagesCompressed
+}
+
+function loadImage(bytes) {
+  return new Promise((resolve, reject) => {
+    const blob = new Blob([bytes], { type: 'image/jpeg' })
+    const url = URL.createObjectURL(blob)
+    const img = new Image()
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img) }
+    img.onerror = reject
+    img.src = url
+  })
 }
 
 function FileCard({ file, onRemove }) {
