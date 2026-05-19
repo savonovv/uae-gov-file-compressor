@@ -32,7 +32,7 @@ export default defineConfig({
   build: {
     target: 'esnext',
     rollupOptions: {
-      external: [/\/wasm\/pdf_compressor\.js$/]
+      external: [/\/wasm\/pdf_compressor\.js$/, /pdf\.worker\./]
     }
   },
   optimizeDeps: {

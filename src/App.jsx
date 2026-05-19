@@ -149,9 +149,11 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
 async function compressWithPdfjs(pdfBytes, targetSize, onProgress) {
   console.log('compressWithPdfjs called, pdfBytes length:', pdfBytes.length)
   
-  // Use CDN worker for pdfjs
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`
+  // Use inline worker - create blob URL from the worker file content
+  const workerBlob = new Blob([await fetch(new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url)).then(r => r.text())], { type: 'application/javascript' })
+  pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob)
   
+  console.log('Document loading...')
   const loadingTask = pdfjsLib.getDocument({ data: pdfBytes })
   console.log('Document loading...')
   const pdfDoc = await loadingTask.promise
