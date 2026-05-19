@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "npm run test:wasm && vite build",
+    "preview": "vite preview",
+    "test:wasm": "node wasm-test.js"
   },
   "dependencies": {
     "react": "^18.2.0",
