@@ -100,13 +100,6 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
   } else {
     console.log('Skipping pdfjs, bestBuffer exists or already under size')
   }
-    } catch (e) {
-      console.error('pdfjs compress error:', e)
-      alert('pdfjs error: ' + e.message)
-    }
-  } else {
-    console.log('Skipping pdfjs, bestSize already', bestSize)
-  }
 
   // Basic optimization as fallback
   if (!bestBuffer || bestSize >= fileBuffer.length) {
