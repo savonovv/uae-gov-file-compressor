@@ -424,7 +424,7 @@ export default function App() {
       <footer className="footer">
         <p>100% client-side processing. No files are uploaded to any server.</p>
         <p className="github-link">
-          <a href="https://github.com/" target="_blank" rel="noopener noreferrer">
+          <a href="https://github.com/savonovv/uae-gov-file-compressor" target="_blank" rel="noopener noreferrer">
             View source on GitHub
           </a>
         </p>

@@ -12,14 +12,14 @@ export default defineConfig({
         const src = resolve(__dirname, 'public/wasm')
         const files = ['pdf_compressor.js', 'pdf_compressor_bg.wasm', 'pdf_compressor_bg.wasm.d.ts', 'pdf_compressor.d.ts', 'package.json']
         
-        // Копируем в dist/wasm/ (для прямого доступа)
+        // Copy to dist/wasm/ (for direct access)
         const dest1 = resolve(__dirname, 'dist/wasm')
         if (!existsSync(dest1)) mkdirSync(dest1, { recursive: true })
         files.forEach(f => {
           try { copyFileSync(resolve(src, f), resolve(dest1, f)) } catch(e) {}
         })
         
-        // Копируем в dist/src/wasm/ (куда смотрит бандл из assets/)
+        // Copy to dist/src/wasm/ (where the asset bundle looks for it)
         const dest2 = resolve(__dirname, 'dist/src/wasm')
         if (!existsSync(dest2)) mkdirSync(dest2, { recursive: true })
         files.forEach(f => {

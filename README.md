@@ -41,13 +41,13 @@ Modern browsers have all the tools needed to process PDF files locally:
 
 ### Use online (recommended)
 
-Visit the live version at: **[https://yourusername.github.io/uae-gov-file-compressor](https://yourusername.github.io/uae-gov-file-compressor)**
+Visit the live version at: **[https://savonovv.github.io/uae-gov-file-compressor](https://savonovv.github.io/uae-gov-file-compressor)**
 
 ### Run locally
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/uae-gov-file-compressor.git
+git clone https://github.com/savonovv/uae-gov-file-compressor.git
 cd uae-gov-file-compressor
 
 # Install dependencies

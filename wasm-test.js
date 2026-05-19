@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Тест WASM модуля перед сборкой
- * Запускается через: node wasm-test.js
+ * WASM module pre-build test
+ * Run via: node wasm-test.js
  */
 
 import { existsSync, readFileSync } from 'fs';
@@ -15,7 +15,7 @@ const requiredFiles = [
   'package.json'
 ];
 
-console.log('🧪 Проверка WASM файлов...\n');
+console.log('Testing WASM files...\n');
 
 let allOk = true;
 
@@ -23,24 +23,24 @@ for (const file of requiredFiles) {
   const filePath = join(WASM_DIR, file);
   if (existsSync(filePath)) {
     const size = (readFileSync(filePath).length / 1024).toFixed(1);
-    console.log(`  ✅ ${file} (${size} KB)`);
+    console.log(`  OK: ${file} (${size} KB)`);
   } else {
-    console.log(`  ❌ ${file} — НЕ НАЙДЕН`);
+    console.log(`  MISSING: ${file}`);
     allOk = false;
   }
 }
 
 if (!allOk) {
-  console.error('\n❌ Тест провален — отсутствуют файлы');
+  console.error('\nTest failed - missing files');
   process.exit(1);
 }
 
-// Проверяем что .wasm весит больше 1MB (скорее всего скомпилирован)
+// Verify .wasm is larger than 1MB (likely compiled)
 const wasmSize = readFileSync(join(WASM_DIR, 'pdf_compressor_bg.wasm')).length;
 if (wasmSize < 500000) {
-  console.error(`\n❌ WASM файл слишком маленький (${wasmSize} bytes) — возможно не скомпилирован`);
+  console.error(`\nWASM file too small (${wasmSize} bytes) - may not be compiled`);
   process.exit(1);
 }
 
-console.log(`\n✅ Все файлы на месте, WASM: ${(wasmSize/1024).toFixed(0)} KB`);
-console.log('✅ Тест пройден — можно собирать!\n');
+console.log(`\nAll files present, WASM: ${(wasmSize/1024).toFixed(0)} KB`);
+console.log('Test passed - ready to build!\n');
