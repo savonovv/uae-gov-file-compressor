@@ -77,10 +77,13 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
     onProgress({ iteration: 0, currentSize: fileBuffer.length, quality: 0.5, message: 'Rendering pages...' })
 
     try {
+      console.log('Starting pdfjs compression...')
       const compressedPdf = await compressWithPdfjs(new Uint8Array(fileBuffer), targetSize, onProgress)
+      console.log('pdfjs result:', compressedPdf ? compressedPdf.length : 'null')
       if (compressedPdf && compressedPdf.length < bestSize) {
         bestBuffer = compressedPdf
         bestSize = compressedPdf.length
+        console.log('pdfjs improved bestBuffer to', bestSize)
       }
     } catch (e) {
       console.error('pdfjs compress error:', e)
@@ -131,15 +134,21 @@ async function compressPdf(fileBuffer, targetSize, onProgress) {
 }
 
 async function compressWithPdfjs(pdfBytes, targetSize, onProgress) {
+  console.log('compressWithPdfjs called, pdfBytes length:', pdfBytes.length)
+  
+  // Use CDN worker for pdfjs
   pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`
   
   const loadingTask = pdfjsLib.getDocument({ data: pdfBytes })
+  console.log('Document loading...')
   const pdfDoc = await loadingTask.promise
+  console.log('Document loaded, numPages:', pdfDoc.numPages)
   const numPages = pdfDoc.numPages
 
   const pdfDocNew = await PDFDocument.create()
   
   for (let i = 1; i <= numPages; i++) {
+    console.log('Rendering page', i)
     onProgress({
       iteration: i,
       currentSize: 0,
@@ -174,7 +183,10 @@ async function compressWithPdfjs(pdfBytes, targetSize, onProgress) {
     })
   }
 
-  return await pdfDocNew.save()
+  console.log('Saving new PDF...')
+  const result = await pdfDocNew.save()
+  console.log('New PDF saved, length:', result.length)
+  return result
 }
 
 function FileCard({ file, onRemove }) {
